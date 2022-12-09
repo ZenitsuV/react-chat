@@ -1,12 +1,17 @@
 import React, { useState } from 'react';
 import { createUserWithEmailAndPassword, updateProfile } from 'firebase/auth';
-import { auth, storage } from '../firebase';
-//import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
+import { auth, db, storage } from '../firebase';
+import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
+import { doc, setDoc } from 'firebase/firestore';
+import { useNavigate, Link } from 'react-router-dom';
 
 const Register = () => {
   const [err, setErr] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const navigate = useNavigate();
 
   const handleSubmit = async (e) => {
+    setLoading(true);
     e.preventDefault();
     const displayName = e.target[0].value;
     const email = e.target[1].value;
@@ -14,40 +19,43 @@ const Register = () => {
     const file = e.target[3].files[0];
 
     try {
-      const res = createUserWithEmailAndPassword(auth, email, password);
+      //Create user
+      const res = await createUserWithEmailAndPassword(auth, email, password);
 
-      const storageRef = ref(storage, displayName);
+      //Create a unique image name
+      const date = new Date().getTime();
+      const storageRef = ref(storage, `${displayName + date}`);
 
-      const uploadTask = uploadBytesResumable(storageRef, file);
-
-      uploadTask.on(
-        'state_changed',
-        (snapshot) => {
-          const progress =
-            (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
-          console.log('Upload is ' + progress + '% done');
-          switch (snapshot.state) {
-            case 'paused':
-              console.log('Upload is paused');
-              break;
-            case 'running':
-              console.log('Upload is running');
-              break;
-          }
-        },
-        (error) => {
-          setErr(tru);
-        },
-        () => {
-          getDownloadURL(uploadTask.snapshot.ref).then(async (downloadURL) => {
+      await uploadBytesResumable(storageRef, file).then(() => {
+        getDownloadURL(storageRef).then(async (downloadURL) => {
+          try {
+            //Update profile
             await updateProfile(res.user, {
               displayName,
               photoURL: downloadURL,
             });
-          });
-        }
-      );
-    } catch (err) {}
+            //create user on firestore
+            await setDoc(doc(db, 'users', res.user.uid), {
+              uid: res.user.uid,
+              displayName,
+              email,
+              photoURL: downloadURL,
+            });
+
+            //create empty user chats on firestore
+            await setDoc(doc(db, 'userChats', res.user.uid), {});
+            navigate('/');
+          } catch (err) {
+            console.log(err);
+            setErr(true);
+            setLoading(false);
+          }
+        });
+      });
+    } catch (err) {
+      setErr(true);
+      setLoading(false);
+    }
   };
 
   return (
@@ -64,10 +72,11 @@ const Register = () => {
             <img src="https://www.kindpng.com/picc/m/3-39791_add-user-group-man-woman-icon-red-avatar.png" />
             Add an Avatar
           </label>
-          <button>Sign up</button>
+          <button disabled={loading}>Sign up</button>
+          {loading && 'Uploading and compressing the image please wait...'}
           {err && <span>Something went wrong</span>}
         </form>
-        <p>You do have an account? Login</p>
+        You do have an account? <Link to="/register">Login</Link>
       </div>
     </div>
   );
